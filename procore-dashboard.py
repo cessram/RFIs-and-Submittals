@@ -237,18 +237,19 @@ def generate_sample_rfis():
 # DATA LOADING
 # ============================================================
 st.markdown(f"# 🏗️ Submittal & RFI Combined Dashboard")
-st.markdown(f"<p style='color:{COLORS['muted']}; margin-top:-10px;'>API CPMC Project — Procore CSV Data Tracker</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='color:{COLORS['muted']}; margin-top:-10px;'>API CPMC Project — Procore Data Tracker (CSV / Excel / PDF)</p>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### 📁 Data Source")
-    data_source = st.radio("Choose data source:", ["📊 Sample Data (Demo)", "📤 Upload Procore CSV"], label_visibility="collapsed")
+    data_source = st.radio("Choose data source:", ["📊 Sample Data (Demo)", "📤 Upload File"], label_visibility="collapsed")
 
-    if data_source == "📤 Upload Procore CSV":
+    if data_source == "📤 Upload File":
         st.markdown("---")
-        st.markdown("**Upload Submittals CSV**")
-        sub_file = st.file_uploader("Submittals", type=["csv"], key="sub", label_visibility="collapsed")
-        st.markdown("**Upload RFIs CSV**")
-        rfi_file = st.file_uploader("RFIs", type=["csv"], key="rfi", label_visibility="collapsed")
+        st.caption("Supported formats: CSV, Excel (.xlsx/.xls), PDF")
+        st.markdown("**Upload Submittals**")
+        sub_file = st.file_uploader("Submittals", type=SUPPORTED_TYPES, key="sub", label_visibility="collapsed")
+        st.markdown("**Upload RFIs**")
+        rfi_file = st.file_uploader("RFIs", type=SUPPORTED_TYPES, key="rfi", label_visibility="collapsed")
     else:
         sub_file = None
         rfi_file = None
@@ -261,15 +262,17 @@ with st.sidebar:
     st.markdown(f"<p style='color:{COLORS['muted']}; font-size: 0.8rem;'>Report Date: {today.strftime('%B %d, %Y')}</p>", unsafe_allow_html=True)
 
 # Load data
-if data_source == "📤 Upload Procore CSV" and sub_file is not None:
-    df_sub = pd.read_csv(sub_file)
-    df_sub.columns = df_sub.columns.str.strip()
+if data_source == "📤 Upload File" and sub_file is not None:
+    df_sub = parse_uploaded_file(sub_file)
+    if df_sub is None:
+        df_sub = generate_sample_submittals()
 else:
     df_sub = generate_sample_submittals()
 
-if data_source == "📤 Upload Procore CSV" and rfi_file is not None:
-    df_rfi = pd.read_csv(rfi_file)
-    df_rfi.columns = df_rfi.columns.str.strip()
+if data_source == "📤 Upload File" and rfi_file is not None:
+    df_rfi = parse_uploaded_file(rfi_file)
+    if df_rfi is None:
+        df_rfi = generate_sample_rfis()
 else:
     df_rfi = generate_sample_rfis()
 
