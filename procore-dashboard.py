@@ -109,12 +109,10 @@ st.markdown(f"""
 
 
 # ============================================================
-# SAMPLE DATA GENERATOR
-# ============================================================
-# ============================================================
 # FILE PARSER — CSV, Excel, PDF
 # ============================================================
 SUPPORTED_TYPES = ["csv", "xlsx", "xls", "pdf"]
+
 
 def parse_uploaded_file(uploaded_file):
     """Parse CSV, Excel (.xlsx/.xls), or PDF into a DataFrame."""
@@ -126,7 +124,6 @@ def parse_uploaded_file(uploaded_file):
         if name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
         elif name.endswith((".xlsx", ".xls")):
-            # Let user pick sheet if multiple exist
             xls = pd.ExcelFile(uploaded_file)
             if len(xls.sheet_names) > 1:
                 sheet = st.selectbox(
@@ -149,7 +146,6 @@ def parse_uploaded_file(uploaded_file):
             if not all_rows:
                 st.warning("⚠️ No tables found in the PDF file.")
                 return None
-            # First row as header
             df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
         else:
             st.error(f"Unsupported file type: {uploaded_file.name}")
@@ -163,6 +159,9 @@ def parse_uploaded_file(uploaded_file):
         return None
 
 
+# ============================================================
+# SAMPLE DATA GENERATOR
+# ============================================================
 def generate_sample_submittals():
     contractors = ["CRB", "CIMA+", "SMP Engineering", "Icon Electric", "Bird Construction"]
     spec_sections = [
@@ -276,12 +275,51 @@ if data_source == "📤 Upload File" and rfi_file is not None:
 else:
     df_rfi = generate_sample_rfis()
 
-# Parse dates
-for col in ["Date Created", "Due Date", "Date Closed"]:
-    if col in df_sub.columns:
-        df_sub[col] = pd.to_datetime(df_sub[col], errors="coerce")
-    if col in df_rfi.columns:
-        df_rfi[col] = pd.to_datetime(df_rfi[col], errors="coerce")
+
+# ============================================================
+# COLUMN NORMALIZATION — handle missing / alternate names
+# ============================================================
+def normalize_columns(df, item_type="submittal"):
+    """Ensure required columns exist, auto-calculate where possible."""
+    # Parse date columns
+    for col in ["Date Created", "Due Date", "Date Closed"]:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # Auto-calculate Days Open if missing
+    if "Days Open" not in df.columns:
+        if "Date Created" in df.columns:
+            now = pd.Timestamp.now()
+            if "Date Closed" in df.columns:
+                closed = pd.to_datetime(df["Date Closed"], errors="coerce")
+                end_date = closed.fillna(now)
+            else:
+                end_date = now
+            df["Days Open"] = (end_date - df["Date Created"]).dt.days.clip(lower=0)
+        else:
+            df["Days Open"] = 0
+
+    # Ensure key columns exist with defaults
+    defaults = {
+        "Status": "Open",
+        "Contractor": "Unknown",
+        "Ball in Court": "Unknown",
+    }
+    if item_type == "submittal":
+        defaults.update({"Submittal #": "", "Title": "", "Reviewer": "", "Spec Section": ""})
+    else:
+        defaults.update({"RFI #": "", "Subject": "", "Discipline": "General",
+                         "Priority": "Medium", "Cost Impact": "None", "Schedule Impact": "No"})
+
+    for col, default in defaults.items():
+        if col not in df.columns:
+            df[col] = default
+
+    return df
+
+
+df_sub = normalize_columns(df_sub, "submittal")
+df_rfi = normalize_columns(df_rfi, "rfi")
 
 # Calculate overdue flags
 df_sub["Is Overdue"] = (df_sub["Status"].isin(["Open", "Pending Review", "Revise & Resubmit"])) & \
@@ -320,6 +358,7 @@ def metric_card(label, value, color):
         <div class='metric-label'>{label}</div>
         <div class='metric-value' style='color:{color};'>{value}</div>
     </div>"""
+
 
 st.markdown("<div class='section-header'>📊 Overview</div>", unsafe_allow_html=True)
 
@@ -430,16 +469,16 @@ with tab1:
     # Full table
     st.markdown("**Full Submittal Log**")
     display_sub = df_sub_f.copy()
-    display_sub["Date Created"] = display_sub["Date Created"].dt.strftime("%Y-%m-%d")
-    display_sub["Due Date"] = display_sub["Due Date"].dt.strftime("%Y-%m-%d")
-    display_sub["Date Closed"] = display_sub["Date Closed"].apply(
-        lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else ""
-    )
+    for dcol in ["Date Created", "Due Date", "Date Closed"]:
+        if dcol in display_sub.columns and pd.api.types.is_datetime64_any_dtype(display_sub[dcol]):
+            display_sub[dcol] = display_sub[dcol].apply(
+                lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else ""
+            )
     st.dataframe(
         display_sub.drop(columns=["Is Overdue"]),
         use_container_width=True, height=400,
         column_config={"Days Open": st.column_config.ProgressColumn(
-            "Days Open", min_value=0, max_value=int(df_sub_f["Days Open"].max()),
+            "Days Open", min_value=0, max_value=max(int(df_sub_f["Days Open"].max()), 1),
             format="%d days"
         )}
     )
@@ -503,16 +542,16 @@ with tab2:
     # Full RFI table
     st.markdown("**Full RFI Log**")
     display_rfi = df_rfi_f.copy()
-    display_rfi["Date Created"] = display_rfi["Date Created"].dt.strftime("%Y-%m-%d")
-    display_rfi["Due Date"] = display_rfi["Due Date"].dt.strftime("%Y-%m-%d")
-    display_rfi["Date Closed"] = display_rfi["Date Closed"].apply(
-        lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else ""
-    )
+    for dcol in ["Date Created", "Due Date", "Date Closed"]:
+        if dcol in display_rfi.columns and pd.api.types.is_datetime64_any_dtype(display_rfi[dcol]):
+            display_rfi[dcol] = display_rfi[dcol].apply(
+                lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else ""
+            )
     st.dataframe(
         display_rfi.drop(columns=["Is Overdue"]),
         use_container_width=True, height=400,
         column_config={"Days Open": st.column_config.ProgressColumn(
-            "Days Open", min_value=0, max_value=int(df_rfi_f["Days Open"].max()),
+            "Days Open", min_value=0, max_value=max(int(df_rfi_f["Days Open"].max()), 1),
             format="%d days"
         )}
     )
@@ -546,7 +585,7 @@ with tab3:
         fig_avg_rfi.update_layout(**PLOT_LAYOUT, showlegend=False)
         st.plotly_chart(fig_avg_rfi, use_container_width=True)
 
-    # Ball in Court heatmap
+    # Ball in Court treemap
     st.markdown("**Ball in Court — Who's Holding Open Items?**")
     bic_sub = df_sub_f[~df_sub_f["Ball in Court"].isin(["Closed"])].groupby(
         ["Contractor", "Ball in Court"]).size().reset_index(name="Count")
@@ -571,24 +610,37 @@ with tab3:
 
     # Cumulative trend over time
     st.markdown("**Cumulative Open Items Over Time**")
-    sub_created = df_sub_f.groupby(df_sub_f["Date Created"].dt.to_period("W").dt.start_time).size().cumsum().reset_index()
-    sub_created.columns = ["Week", "Cumulative Submittals"]
-    rfi_created = df_rfi_f.groupby(df_rfi_f["Date Created"].dt.to_period("W").dt.start_time).size().cumsum().reset_index()
-    rfi_created.columns = ["Week", "Cumulative RFIs"]
+    if "Date Created" in df_sub_f.columns and df_sub_f["Date Created"].notna().any():
+        sub_created = df_sub_f.dropna(subset=["Date Created"]).groupby(
+            df_sub_f["Date Created"].dropna().dt.to_period("W").dt.start_time
+        ).size().cumsum().reset_index()
+        sub_created.columns = ["Week", "Cumulative Submittals"]
+    else:
+        sub_created = pd.DataFrame(columns=["Week", "Cumulative Submittals"])
+
+    if "Date Created" in df_rfi_f.columns and df_rfi_f["Date Created"].notna().any():
+        rfi_created = df_rfi_f.dropna(subset=["Date Created"]).groupby(
+            df_rfi_f["Date Created"].dropna().dt.to_period("W").dt.start_time
+        ).size().cumsum().reset_index()
+        rfi_created.columns = ["Week", "Cumulative RFIs"]
+    else:
+        rfi_created = pd.DataFrame(columns=["Week", "Cumulative RFIs"])
 
     fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(
-        x=sub_created["Week"], y=sub_created["Cumulative Submittals"],
-        mode="lines+markers", name="Submittals",
-        line=dict(color=COLORS["accent"], width=2),
-        marker=dict(size=5)
-    ))
-    fig_trend.add_trace(go.Scatter(
-        x=rfi_created["Week"], y=rfi_created["Cumulative RFIs"],
-        mode="lines+markers", name="RFIs",
-        line=dict(color=COLORS["accent2"], width=2),
-        marker=dict(size=5)
-    ))
+    if not sub_created.empty:
+        fig_trend.add_trace(go.Scatter(
+            x=sub_created["Week"], y=sub_created["Cumulative Submittals"],
+            mode="lines+markers", name="Submittals",
+            line=dict(color=COLORS["accent"], width=2),
+            marker=dict(size=5)
+        ))
+    if not rfi_created.empty:
+        fig_trend.add_trace(go.Scatter(
+            x=rfi_created["Week"], y=rfi_created["Cumulative RFIs"],
+            mode="lines+markers", name="RFIs",
+            line=dict(color=COLORS["accent2"], width=2),
+            marker=dict(size=5)
+        ))
     fig_trend.update_layout(
         paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
         font=dict(color=COLORS["text"]),
