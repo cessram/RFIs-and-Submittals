@@ -102,15 +102,6 @@ st.markdown(f"""
         color: {COLORS['accent']} !important;
         border-bottom: 2px solid {COLORS['accent']};
     }}
-    .debug-box {{
-        background: #F0FDF4;
-        border: 1px solid #BBF7D0;
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        font-size: 0.82rem;
-        color: #166534;
-    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -174,7 +165,6 @@ def extract_companies_from_names(cell_value):
 # PROCORE COLUMN NAME MAPPING
 # ============================================================
 SUBMITTAL_COL_MAP = {
-    # Procore name variants → internal name
     "number": "Submittal #", "#": "Submittal #", "submittal #": "Submittal #",
     "submittal number": "Submittal #", "no.": "Submittal #", "no": "Submittal #",
     "title": "Title", "description": "Title", "submittal title": "Title",
@@ -229,7 +219,7 @@ RFI_COL_MAP = {
     "contractor": "Contractor", "company": "Contractor",
     "responsible contractor": "Contractor", "subcontractor": "Contractor",
     "trade": "Contractor", "vendor": "Contractor",
-    "discipline": "Discipline", "category": "Discipline", "trade": "Discipline",
+    "discipline": "Discipline", "category": "Discipline",
     "priority": "Priority", "urgency": "Priority",
     "cost impact": "Cost Impact", "cost code": "Cost Impact",
     "schedule impact": "Schedule Impact",
@@ -239,7 +229,6 @@ RFI_COL_MAP = {
 
 
 def map_columns(df, col_map):
-    """Rename columns by matching against the Procore mapping table."""
     rename_dict = {}
     for col in df.columns:
         key = col.strip().lower()
@@ -252,7 +241,7 @@ def map_columns(df, col_map):
 
 
 # ============================================================
-# OPEN STATUS DETECTION (auto-detect from actual data)
+# STATUS CLASSIFICATION
 # ============================================================
 KNOWN_CLOSED_STATUSES = {
     "closed", "approved", "approved as noted", "rejected", "void", "voided",
@@ -266,12 +255,10 @@ KNOWN_OPEN_STATUSES = {
 
 
 def classify_statuses(df):
-    """Auto-classify statuses into open/closed based on known patterns + date hints."""
     if "Status" not in df.columns:
         return [], []
     all_statuses = df["Status"].dropna().unique()
     open_list, closed_list = [], []
-
     for s in all_statuses:
         s_lower = str(s).strip().lower()
         if s_lower in KNOWN_CLOSED_STATUSES:
@@ -279,7 +266,6 @@ def classify_statuses(df):
         elif s_lower in KNOWN_OPEN_STATUSES:
             open_list.append(s)
         else:
-            # Heuristic: if most rows with this status have a Date Closed, it's closed
             if "Date Closed" in df.columns:
                 mask = df["Status"] == s
                 has_closed = df.loc[mask, "Date Closed"].notna().mean()
@@ -289,7 +275,6 @@ def classify_statuses(df):
                     open_list.append(s)
             else:
                 open_list.append(s)
-
     return open_list, closed_list
 
 
@@ -341,7 +326,7 @@ def parse_uploaded_file(uploaded_file):
 
 
 # ============================================================
-# DERIVE CONTRACTOR FROM NAMES
+# DERIVE CONTRACTOR FROM EMPLOYEE NAMES
 # ============================================================
 def derive_contractor_column(df):
     """
@@ -349,14 +334,12 @@ def derive_contractor_column(df):
     Priority: Ball in Court > Received From > Assigned To > other name cols.
     Preserves original names in 'Employee(s)' column for table display.
     """
-    # If Contractor column already has real company names, keep it
     if "Contractor" in df.columns:
         sample = df["Contractor"].dropna().head(20).str.strip().str.lower()
         known = {"cima+", "smp", "crb", "api", "bird", "planworks", "icon electric"}
         if any(any(k in s for k in known) for s in sample):
             return df
 
-    # Priority-ordered list of columns to extract company from
     priority_cols = ["Ball in Court", "Received From", "Assigned To", "Reviewer",
                      "Distributed To", "Submitted By", "Created By", "Approver", "RFI Manager"]
 
@@ -366,7 +349,6 @@ def derive_contractor_column(df):
             source_col = col
             break
 
-    # Fallback: scan all columns for name-like fields
     if source_col is None:
         for col in df.columns:
             cl = col.lower()
@@ -376,7 +358,6 @@ def derive_contractor_column(df):
                     break
 
     if source_col:
-        # Keep original names for table display
         df["Employee(s)"] = df[source_col].fillna("").astype(str)
         df["Contractor"] = df[source_col].apply(extract_companies_from_names)
         st.sidebar.success(f"✅ Mapped **'{source_col}'** → Contractor")
@@ -394,15 +375,12 @@ def normalize_columns(df, item_type="submittal"):
     col_map = SUBMITTAL_COL_MAP if item_type == "submittal" else RFI_COL_MAP
     df, mapped = map_columns(df, col_map)
 
-    # Derive Contractor from employee names
     df = derive_contractor_column(df)
 
-    # Parse date columns
     for col in ["Date Created", "Due Date", "Date Closed"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # Auto-calculate Days Open
     if "Days Open" not in df.columns:
         if "Date Created" in df.columns:
             now = pd.Timestamp.now()
@@ -416,7 +394,6 @@ def normalize_columns(df, item_type="submittal"):
     else:
         df["Days Open"] = pd.to_numeric(df["Days Open"], errors="coerce").fillna(0).astype(int)
 
-    # Defaults for missing columns
     defaults = {"Status": "Open", "Contractor": "Unknown", "Ball in Court": "Unknown"}
     if item_type == "submittal":
         defaults.update({"Submittal #": "", "Title": "", "Reviewer": "", "Spec Section": ""})
@@ -427,8 +404,7 @@ def normalize_columns(df, item_type="submittal"):
         if col not in df.columns:
             df[col] = default
 
-    # Map Ball in Court to companies if it contains employee names
-    # Keep original for table display
+    # Map Ball in Court to companies — keep original names for table display
     if "Ball in Court" in df.columns:
         df["Ball in Court (Names)"] = df["Ball in Court"].fillna("").astype(str)
         sample_bic = df["Ball in Court"].dropna().head(10).str.strip().str.lower()
@@ -440,33 +416,23 @@ def normalize_columns(df, item_type="submittal"):
 
 
 # ============================================================
-# OVERDUE CALCULATION (flexible)
+# OVERDUE CALCULATION
 # ============================================================
 def calculate_overdue(df, threshold_days, open_statuses):
-    """
-    Mark items as overdue using multiple signals:
-    1. Procore's own 'Procore Overdue' flag (if present)
-    2. Status is open AND days open > threshold
-    3. Status is open AND due date has passed
-    """
     is_open = df["Status"].isin(open_statuses)
 
-    # Signal 1: Procore overdue flag
     procore_flag = pd.Series(False, index=df.index)
     if "Procore Overdue" in df.columns:
         procore_flag = df["Procore Overdue"].astype(str).str.strip().str.lower().isin(
             ["yes", "true", "1", "overdue", "y"]
         )
 
-    # Signal 2: Days open exceeds threshold
     days_exceed = df["Days Open"] > threshold_days
 
-    # Signal 3: Due date has passed
     past_due = pd.Series(False, index=df.index)
     if "Due Date" in df.columns:
         past_due = df["Due Date"].notna() & (df["Due Date"] < pd.Timestamp.now())
 
-    # Overdue = open AND (any signal)
     df["Is Overdue"] = is_open & (procore_flag | days_exceed | past_due)
     return df
 
@@ -597,7 +563,7 @@ rfi_open_statuses, rfi_closed_statuses = classify_statuses(df_rfi)
 df_sub = calculate_overdue(df_sub, submittal_threshold, sub_open_statuses)
 df_rfi = calculate_overdue(df_rfi, rfi_threshold, rfi_open_statuses)
 
-# Show detected columns & statuses in sidebar (debug helper)
+# Sidebar debug info
 with st.sidebar:
     st.markdown("---")
     st.markdown("### 🔎 Detected Columns")
@@ -609,6 +575,7 @@ with st.sidebar:
         st.caption(", ".join(df_rfi.columns.tolist()))
         st.caption(f"**Open statuses:** {rfi_open_statuses}")
         st.caption(f"**Closed statuses:** {rfi_closed_statuses}")
+
 
 # ============================================================
 # SIDEBAR FILTERS
@@ -676,22 +643,24 @@ if len(overdue_subs) > 0 or len(overdue_rfis) > 0:
 
     id_col_sub = "Submittal #" if "Submittal #" in overdue_subs.columns else overdue_subs.columns[0]
     title_col_sub = "Title" if "Title" in overdue_subs.columns else (overdue_subs.columns[1] if len(overdue_subs.columns) > 1 else id_col_sub)
+    bic_display_sub = "Ball in Court (Names)" if "Ball in Court (Names)" in overdue_subs.columns else "Ball in Court"
 
     for _, row in overdue_subs.head(5).iterrows():
         st.markdown(
             f"<div class='alert-banner'>⚠️ <b>{row[id_col_sub]}</b> — {row[title_col_sub]} | "
-            f"Contractor: {row['Contractor']} | Ball in Court: {row['Ball in Court']} | "
+            f"Contractor: {row['Contractor']} | Ball in Court: {row[bic_display_sub]} | "
             f"<b>{int(row['Days Open'])} days open</b></div>",
             unsafe_allow_html=True
         )
 
     id_col_rfi = "RFI #" if "RFI #" in overdue_rfis.columns else overdue_rfis.columns[0]
     title_col_rfi = "Subject" if "Subject" in overdue_rfis.columns else (overdue_rfis.columns[1] if len(overdue_rfis.columns) > 1 else id_col_rfi)
+    bic_display_rfi = "Ball in Court (Names)" if "Ball in Court (Names)" in overdue_rfis.columns else "Ball in Court"
 
     for _, row in overdue_rfis.head(5).iterrows():
         st.markdown(
             f"<div class='alert-banner'>⚠️ <b>{row[id_col_rfi]}</b> — {row[title_col_rfi]} | "
-            f"Contractor: {row['Contractor']} | Ball in Court: {row['Ball in Court']} | "
+            f"Contractor: {row['Contractor']} | Ball in Court: {row[bic_display_rfi]} | "
             f"<b>{int(row['Days Open'])} days open</b></div>",
             unsafe_allow_html=True
         )
@@ -731,7 +700,7 @@ with tab1:
             bic_c.columns = ["Ball in Court", "Count"]
             fig = px.bar(bic_c, x="Ball in Court", y="Count",
                          color="Count", color_continuous_scale=["#E2E8F0", COLORS["accent"]],
-                         title="Open Submittals — Ball in Court")
+                         title="Open Submittals — Ball in Court (Company)")
             fig.update_layout(**PLOT_LAYOUT, showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
 
@@ -743,14 +712,14 @@ with tab1:
     fig.update_layout(**PLOT_LAYOUT, legend=dict(orientation="h", y=-0.2))
     st.plotly_chart(fig, use_container_width=True)
 
+    # Full table — shows employee names, not mapped companies in Ball in Court
     st.markdown("**Full Submittal Log**")
     display_sub = df_sub_f.copy()
     for dc in ["Date Created", "Due Date", "Date Closed"]:
         if dc in display_sub.columns and pd.api.types.is_datetime64_any_dtype(display_sub[dc]):
             display_sub[dc] = display_sub[dc].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else "")
-    # Show employee names in table, hide internal-only columns
+    # Swap Ball in Court back to employee names for the table
     hide_cols = [c for c in ["Is Overdue", "Procore Overdue", "Ball in Court"] if c in display_sub.columns]
-    # Rename Ball in Court (Names) back to Ball in Court for display
     if "Ball in Court (Names)" in display_sub.columns:
         display_sub = display_sub.rename(columns={"Ball in Court (Names)": "Ball in Court"})
     else:
@@ -808,6 +777,7 @@ with tab2:
                               font=dict(color=COLORS["text"]), title_font_size=14)
             st.plotly_chart(fig, use_container_width=True)
 
+    # Full table — shows employee names
     st.markdown("**Full RFI Log**")
     display_rfi = df_rfi_f.copy()
     for dc in ["Date Created", "Due Date", "Date Closed"]:
@@ -850,6 +820,7 @@ with tab3:
         fig.update_layout(**PLOT_LAYOUT, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
+    # Ball in Court treemap — uses company names
     st.markdown("**Ball in Court — Who's Holding Open Items?**")
     bic_sub = df_sub_f[~df_sub_f["Ball in Court"].isin(["Closed", ""])].groupby(
         ["Contractor", "Ball in Court"]).size().reset_index(name="Count")
@@ -864,6 +835,7 @@ with tab3:
         fig.update_layout(paper_bgcolor=COLORS["bg"], font=dict(color=COLORS["text"]), title_font_size=14)
         st.plotly_chart(fig, use_container_width=True)
 
+    # Cumulative trend
     st.markdown("**Cumulative Open Items Over Time**")
     fig_trend = go.Figure()
     if "Date Created" in df_sub_f.columns and df_sub_f["Date Created"].notna().any():
@@ -908,11 +880,13 @@ with col_x:
 
     parts = []
     if not overdue_subs.empty:
-        parts.append(overdue_subs[[sub_id, sub_title, "Contractor", "Ball in Court", "Days Open"]].rename(
-            columns={sub_id: "Item #", sub_title: "Description"}))
+        bic_exp = "Ball in Court (Names)" if "Ball in Court (Names)" in overdue_subs.columns else "Ball in Court"
+        parts.append(overdue_subs[[sub_id, sub_title, "Contractor", bic_exp, "Days Open"]].rename(
+            columns={sub_id: "Item #", sub_title: "Description", bic_exp: "Ball in Court"}))
     if not overdue_rfis.empty:
-        parts.append(overdue_rfis[[rfi_id, rfi_title, "Contractor", "Ball in Court", "Days Open"]].rename(
-            columns={rfi_id: "Item #", rfi_title: "Description"}))
+        bic_exp = "Ball in Court (Names)" if "Ball in Court (Names)" in overdue_rfis.columns else "Ball in Court"
+        parts.append(overdue_rfis[[rfi_id, rfi_title, "Contractor", bic_exp, "Days Open"]].rename(
+            columns={rfi_id: "Item #", rfi_title: "Description", bic_exp: "Ball in Court"}))
     if parts:
         overdue_report = pd.concat(parts)
         st.download_button("⬇️ Overdue Items Report", overdue_report.to_csv(index=False), "overdue_report.csv", "text/csv")
