@@ -1,7 +1,8 @@
 streamlit
-matplotlib
-seaborn
+pandas
+plotly
 openpyxl
+pdfplumber
 
 # Data Manipulation
 pandas>=2.0.0
