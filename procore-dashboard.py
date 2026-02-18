@@ -5,6 +5,16 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
 
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None
+
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
+
 # ============================================================
 # PAGE CONFIG & LIGHT THEME
 # ============================================================
@@ -101,6 +111,58 @@ st.markdown(f"""
 # ============================================================
 # SAMPLE DATA GENERATOR
 # ============================================================
+# ============================================================
+# FILE PARSER — CSV, Excel, PDF
+# ============================================================
+SUPPORTED_TYPES = ["csv", "xlsx", "xls", "pdf"]
+
+def parse_uploaded_file(uploaded_file):
+    """Parse CSV, Excel (.xlsx/.xls), or PDF into a DataFrame."""
+    if uploaded_file is None:
+        return None
+    name = uploaded_file.name.lower()
+
+    try:
+        if name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        elif name.endswith((".xlsx", ".xls")):
+            # Let user pick sheet if multiple exist
+            xls = pd.ExcelFile(uploaded_file)
+            if len(xls.sheet_names) > 1:
+                sheet = st.selectbox(
+                    f"Select sheet from **{uploaded_file.name}**",
+                    xls.sheet_names, key=f"sheet_{uploaded_file.name}"
+                )
+            else:
+                sheet = xls.sheet_names[0]
+            df = pd.read_excel(xls, sheet_name=sheet)
+        elif name.endswith(".pdf"):
+            if pdfplumber is None:
+                st.error("📦 `pdfplumber` is required for PDF import. Install it with: `pip install pdfplumber`")
+                return None
+            all_rows = []
+            with pdfplumber.open(io.BytesIO(uploaded_file.read())) as pdf:
+                for page in pdf.pages:
+                    table = page.extract_table()
+                    if table:
+                        all_rows.extend(table)
+            if not all_rows:
+                st.warning("⚠️ No tables found in the PDF file.")
+                return None
+            # First row as header
+            df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+        else:
+            st.error(f"Unsupported file type: {uploaded_file.name}")
+            return None
+
+        df.columns = df.columns.str.strip()
+        return df
+
+    except Exception as e:
+        st.error(f"❌ Error reading **{uploaded_file.name}**: {e}")
+        return None
+
+
 def generate_sample_submittals():
     contractors = ["CRB", "CIMA+", "SMP Engineering", "Icon Electric", "Bird Construction"]
     spec_sections = [
