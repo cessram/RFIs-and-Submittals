@@ -344,28 +344,46 @@ def parse_uploaded_file(uploaded_file):
 # DERIVE CONTRACTOR FROM NAMES
 # ============================================================
 def derive_contractor_column(df):
+    """
+    Derive 'Contractor' (company) from employee name columns.
+    Priority: Ball in Court > Received From > Assigned To > other name cols.
+    Preserves original names in 'Employee(s)' column for table display.
+    """
+    # If Contractor column already has real company names, keep it
     if "Contractor" in df.columns:
         sample = df["Contractor"].dropna().head(20).str.strip().str.lower()
         known = {"cima+", "smp", "crb", "api", "bird", "planworks", "icon electric"}
         if any(any(k in s for k in known) for s in sample):
             return df
 
-    name_cols = []
-    for col in df.columns:
-        cl = col.lower()
-        if any(kw in cl for kw in [
-            "ball in court", "assigned", "responsible", "reviewer",
-            "received from", "created by", "submitted by", "name",
-            "distributed to", "approver", "rfi manager"
-        ]):
-            name_cols.append(col)
+    # Priority-ordered list of columns to extract company from
+    priority_cols = ["Ball in Court", "Received From", "Assigned To", "Reviewer",
+                     "Distributed To", "Submitted By", "Created By", "Approver", "RFI Manager"]
 
-    if name_cols:
-        source_col = name_cols[0]
+    source_col = None
+    for col in priority_cols:
+        if col in df.columns and df[col].notna().any():
+            source_col = col
+            break
+
+    # Fallback: scan all columns for name-like fields
+    if source_col is None:
+        for col in df.columns:
+            cl = col.lower()
+            if any(kw in cl for kw in ["name", "responsible", "assigned", "contact", "person"]):
+                if df[col].notna().any():
+                    source_col = col
+                    break
+
+    if source_col:
+        # Keep original names for table display
+        df["Employee(s)"] = df[source_col].fillna("").astype(str)
         df["Contractor"] = df[source_col].apply(extract_companies_from_names)
         st.sidebar.success(f"✅ Mapped **'{source_col}'** → Contractor")
     elif "Contractor" not in df.columns:
         df["Contractor"] = "Unknown"
+        df["Employee(s)"] = ""
+
     return df
 
 
@@ -409,12 +427,14 @@ def normalize_columns(df, item_type="submittal"):
         if col not in df.columns:
             df[col] = default
 
-    # Map Ball in Court to companies if it has employee names
+    # Map Ball in Court to companies if it contains employee names
+    # Keep original for table display
     if "Ball in Court" in df.columns:
+        df["Ball in Court (Names)"] = df["Ball in Court"].fillna("").astype(str)
         sample_bic = df["Ball in Court"].dropna().head(10).str.strip().str.lower()
         standard_bic = {"consultant", "contractor", "owner", "architect", "closed", "unknown", ""}
         if not any(s in standard_bic for s in sample_bic):
-            df["Ball in Court"] = df["Ball in Court"].apply(extract_companies_from_names)
+            df["Ball in Court"] = df["Ball in Court (Names)"].apply(extract_companies_from_names)
 
     return df
 
@@ -728,9 +748,15 @@ with tab1:
     for dc in ["Date Created", "Due Date", "Date Closed"]:
         if dc in display_sub.columns and pd.api.types.is_datetime64_any_dtype(display_sub[dc]):
             display_sub[dc] = display_sub[dc].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else "")
-    drop_cols = [c for c in ["Is Overdue", "Procore Overdue"] if c in display_sub.columns]
+    # Show employee names in table, hide internal-only columns
+    hide_cols = [c for c in ["Is Overdue", "Procore Overdue", "Ball in Court"] if c in display_sub.columns]
+    # Rename Ball in Court (Names) back to Ball in Court for display
+    if "Ball in Court (Names)" in display_sub.columns:
+        display_sub = display_sub.rename(columns={"Ball in Court (Names)": "Ball in Court"})
+    else:
+        hide_cols = [c for c in hide_cols if c != "Ball in Court"]
     st.dataframe(
-        display_sub.drop(columns=drop_cols), use_container_width=True, height=400,
+        display_sub.drop(columns=hide_cols, errors="ignore"), use_container_width=True, height=400,
         column_config={"Days Open": st.column_config.ProgressColumn(
             "Days Open", min_value=0, max_value=max(int(df_sub_f["Days Open"].max()), 1), format="%d days"
         )}
@@ -787,9 +813,13 @@ with tab2:
     for dc in ["Date Created", "Due Date", "Date Closed"]:
         if dc in display_rfi.columns and pd.api.types.is_datetime64_any_dtype(display_rfi[dc]):
             display_rfi[dc] = display_rfi[dc].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else "")
-    drop_cols = [c for c in ["Is Overdue", "Procore Overdue"] if c in display_rfi.columns]
+    hide_cols = [c for c in ["Is Overdue", "Procore Overdue", "Ball in Court"] if c in display_rfi.columns]
+    if "Ball in Court (Names)" in display_rfi.columns:
+        display_rfi = display_rfi.rename(columns={"Ball in Court (Names)": "Ball in Court"})
+    else:
+        hide_cols = [c for c in hide_cols if c != "Ball in Court"]
     st.dataframe(
-        display_rfi.drop(columns=drop_cols), use_container_width=True, height=400,
+        display_rfi.drop(columns=hide_cols, errors="ignore"), use_container_width=True, height=400,
         column_config={"Days Open": st.column_config.ProgressColumn(
             "Days Open", min_value=0, max_value=max(int(df_rfi_f["Days Open"].max()), 1), format="%d days"
         )}
@@ -888,11 +918,17 @@ with col_x:
         st.download_button("⬇️ Overdue Items Report", overdue_report.to_csv(index=False), "overdue_report.csv", "text/csv")
 
 with col_y:
-    drop_c = [c for c in ["Is Overdue", "Procore Overdue"] if c in df_sub_f.columns]
-    st.download_button("⬇️ Full Submittals CSV", df_sub_f.drop(columns=drop_c).to_csv(index=False), "submittals_export.csv", "text/csv")
+    exp_sub = df_sub_f.copy()
+    if "Ball in Court (Names)" in exp_sub.columns:
+        exp_sub = exp_sub.rename(columns={"Ball in Court (Names)": "Ball in Court (Employee)"})
+    drop_c = [c for c in ["Is Overdue", "Procore Overdue"] if c in exp_sub.columns]
+    st.download_button("⬇️ Full Submittals CSV", exp_sub.drop(columns=drop_c).to_csv(index=False), "submittals_export.csv", "text/csv")
 
 with col_z:
-    drop_c = [c for c in ["Is Overdue", "Procore Overdue"] if c in df_rfi_f.columns]
-    st.download_button("⬇️ Full RFIs CSV", df_rfi_f.drop(columns=drop_c).to_csv(index=False), "rfis_export.csv", "text/csv")
+    exp_rfi = df_rfi_f.copy()
+    if "Ball in Court (Names)" in exp_rfi.columns:
+        exp_rfi = exp_rfi.rename(columns={"Ball in Court (Names)": "Ball in Court (Employee)"})
+    drop_c = [c for c in ["Is Overdue", "Procore Overdue"] if c in exp_rfi.columns]
+    st.download_button("⬇️ Full RFIs CSV", exp_rfi.drop(columns=drop_c).to_csv(index=False), "rfis_export.csv", "text/csv")
 
 st.markdown(f"<p style='text-align:center; color:{COLORS['muted']}; margin-top:30px;'>API CPMC Project Dashboard | Bird Construction | Built with Streamlit</p>", unsafe_allow_html=True)
