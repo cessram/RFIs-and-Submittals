@@ -5,24 +5,24 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
 
-# pip install openpyxl  (required for Excel file reading)
-
 # ============================================================
-# PAGE CONFIG & DARK THEME
+# PAGE CONFIG & LIGHT THEME
 # ============================================================
 st.set_page_config(page_title="Submittal & RFI Tracker", layout="wide", page_icon="🏗️")
 
 COLORS = {
-    "bg": "#0E1117",
-    "card": "#1A1D23",
-    "accent": "#00D4AA",
+    "bg": "#FFFFFF",
+    "card": "#F8FAFC",
+    "accent": "#0D9488",
     "accent2": "#7C3AED",
-    "warning": "#F59E0B",
-    "danger": "#EF4444",
-    "success": "#10B981",
-    "text": "#E2E8F0",
-    "muted": "#94A3B8",
-    "blue": "#3B82F6",
+    "warning": "#D97706",
+    "danger": "#DC2626",
+    "success": "#059669",
+    "text": "#1E293B",
+    "muted": "#64748B",
+    "blue": "#2563EB",
+    "border": "#E2E8F0",
+    "grid": "#F1F5F9",
 }
 
 st.markdown(f"""
@@ -31,16 +31,18 @@ st.markdown(f"""
         background-color: {COLORS['bg']};
     }}
     .metric-card {{
-        background: linear-gradient(135deg, {COLORS['card']} 0%, #22252D 100%);
-        border: 1px solid #2D3039;
+        background: {COLORS['card']};
+        border: 1px solid {COLORS['border']};
         border-radius: 12px;
         padding: 20px;
         text-align: center;
         transition: transform 0.2s;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }}
     .metric-card:hover {{
         transform: translateY(-2px);
         border-color: {COLORS['accent']};
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }}
     .metric-value {{
         font-size: 2.2rem;
@@ -65,16 +67,17 @@ st.markdown(f"""
         border-bottom: 2px solid {COLORS['accent']};
     }}
     .alert-banner {{
-        background: linear-gradient(90deg, #7F1D1D 0%, #991B1B 100%);
-        border: 1px solid {COLORS['danger']};
+        background: #FEF2F2;
+        border: 1px solid #FECACA;
+        border-left: 4px solid {COLORS['danger']};
         border-radius: 8px;
         padding: 12px 20px;
         margin: 8px 0;
-        color: #FCA5A5;
+        color: #991B1B;
         font-size: 0.9rem;
     }}
     div[data-testid="stDataFrame"] {{
-        border: 1px solid #2D3039;
+        border: 1px solid {COLORS['border']};
         border-radius: 8px;
     }}
     .stTabs [data-baseweb="tab-list"] {{
@@ -87,7 +90,7 @@ st.markdown(f"""
         color: {COLORS['muted']};
     }}
     .stTabs [aria-selected="true"] {{
-        background-color: #22252D;
+        background-color: {COLORS['bg']};
         color: {COLORS['accent']} !important;
         border-bottom: 2px solid {COLORS['accent']};
     }}
@@ -96,7 +99,7 @@ st.markdown(f"""
 
 
 # ============================================================
-# SAMPLE DATA GENERATOR (for testing before real CSV import)
+# SAMPLE DATA GENERATOR
 # ============================================================
 def generate_sample_submittals():
     contractors = ["CRB", "CIMA+", "SMP Engineering", "Icon Electric", "Bird Construction"]
@@ -171,7 +174,7 @@ def generate_sample_rfis():
 # ============================================================
 # DATA LOADING
 # ============================================================
-st.markdown("# 🏗️ Submittal & RFI Combined Dashboard")
+st.markdown(f"# 🏗️ Submittal & RFI Combined Dashboard")
 st.markdown(f"<p style='color:{COLORS['muted']}; margin-top:-10px;'>API CPMC Project — Procore CSV Data Tracker</p>", unsafe_allow_html=True)
 
 with st.sidebar:
@@ -180,10 +183,10 @@ with st.sidebar:
 
     if data_source == "📤 Upload Procore CSV":
         st.markdown("---")
-        st.markdown("**Upload Submittals (CSV or Excel)**")
-        sub_file = st.file_uploader("Submittals", type=["csv", "xlsx", "xls"], key="sub", label_visibility="collapsed")
-        st.markdown("**Upload RFIs (CSV or Excel)**")
-        rfi_file = st.file_uploader("RFIs", type=["csv", "xlsx", "xls"], key="rfi", label_visibility="collapsed")
+        st.markdown("**Upload Submittals CSV**")
+        sub_file = st.file_uploader("Submittals", type=["csv"], key="sub", label_visibility="collapsed")
+        st.markdown("**Upload RFIs CSV**")
+        rfi_file = st.file_uploader("RFIs", type=["csv"], key="rfi", label_visibility="collapsed")
     else:
         sub_file = None
         rfi_file = None
@@ -195,123 +198,16 @@ with st.sidebar:
     today = datetime.now()
     st.markdown(f"<p style='color:{COLORS['muted']}; font-size: 0.8rem;'>Report Date: {today.strftime('%B %d, %Y')}</p>", unsafe_allow_html=True)
 
-# ============================================================
-# FILE READER & COLUMN AUTO-MAPPER
-# ============================================================
-def read_file(uploaded_file):
-    """Read CSV or Excel file into DataFrame."""
-    if uploaded_file is None:
-        return None
-    fname = uploaded_file.name.lower()
-    if fname.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(uploaded_file, engine="openpyxl")
-    else:
-        df = pd.read_csv(uploaded_file)
-    df.columns = df.columns.str.strip()
-    return df
-
-
-# Procore column name mapping — maps common Procore export headers to dashboard headers
-SUBMITTAL_COL_MAP = {
-    # Procore header variations → Dashboard standard
-    "Number": "Submittal #", "#": "Submittal #", "Submittal Number": "Submittal #",
-    "Submittal No": "Submittal #", "Submittal No.": "Submittal #", "No.": "Submittal #",
-    "Subject": "Title", "Description": "Title", "Submittal Title": "Title",
-    "Spec Section": "Spec Section", "Specification Section": "Spec Section",
-    "Spec #": "Spec Section", "Spec No": "Spec Section", "CSI Code": "Spec Section",
-    "Responsible Contractor": "Contractor", "Subcontractor": "Contractor",
-    "Sub": "Contractor", "Trade": "Contractor", "Company": "Contractor",
-    "Received From": "Contractor",
-    "Status": "Status", "Submittal Status": "Status", "Current Status": "Status",
-    "Ball in Court": "Ball in Court", "Ball In Court": "Ball in Court",
-    "Responsible": "Ball in Court", "Assigned To": "Ball in Court",
-    "Submitted On": "Date Created", "Created Date": "Date Created",
-    "Date Submitted": "Date Created", "Created At": "Date Created",
-    "Submit By": "Date Created", "Received Date": "Date Created",
-    "Due Date": "Due Date", "Required Date": "Due Date",
-    "Response Due": "Due Date", "Needed By": "Due Date",
-    "Date Returned": "Date Closed", "Closed Date": "Date Closed",
-    "Completed Date": "Date Closed", "Date Completed": "Date Closed",
-    "Returned Date": "Date Closed", "Closed On": "Date Closed",
-    "Reviewer": "Reviewer", "Approver": "Reviewer", "Reviewed By": "Reviewer",
-    "Lead Time": "Lead Time", "Lead Time (Days)": "Lead Time",
-}
-
-RFI_COL_MAP = {
-    "Number": "RFI #", "#": "RFI #", "RFI Number": "RFI #",
-    "RFI No": "RFI #", "RFI No.": "RFI #", "No.": "RFI #",
-    "Subject": "Subject", "Description": "Subject", "Question": "Subject",
-    "RFI Title": "Subject", "Title": "Subject",
-    "Discipline": "Discipline", "Category": "Discipline", "Trade": "Discipline",
-    "Responsible Contractor": "Contractor", "Subcontractor": "Contractor",
-    "Sub": "Contractor", "Company": "Contractor", "Initiated By": "Contractor",
-    "From": "Contractor", "Created By": "Contractor",
-    "Status": "Status", "RFI Status": "Status", "Current Status": "Status",
-    "Priority": "Priority", "Importance": "Priority",
-    "Ball in Court": "Ball in Court", "Ball In Court": "Ball in Court",
-    "Responsible": "Ball in Court", "Assigned To": "Ball in Court",
-    "RFI Manager": "Ball in Court",
-    "Date Initiated": "Date Created", "Created Date": "Date Created",
-    "Date Created": "Date Created", "Created At": "Date Created",
-    "Sent Date": "Date Created",
-    "Due Date": "Due Date", "Response Due": "Due Date", "Required Date": "Due Date",
-    "Date Closed": "Date Closed", "Closed Date": "Date Closed",
-    "Date Answered": "Date Closed", "Answered Date": "Date Closed",
-    "Completed Date": "Date Closed",
-    "Cost Impact": "Cost Impact", "Cost Code": "Cost Impact",
-    "Schedule Impact": "Schedule Impact",
-}
-
-
-def auto_map_columns(df, col_map):
-    """Auto-map Procore export columns to dashboard standard columns."""
-    mapped = {}
-    for orig_col in df.columns:
-        clean = orig_col.strip()
-        if clean in col_map:
-            mapped[clean] = col_map[clean]
-    if mapped:
-        df = df.rename(columns=mapped)
-    return df
-
-
-def calc_days_open(df, date_created_col="Date Created", date_closed_col="Date Closed"):
-    """Calculate Days Open if not already present."""
-    if "Days Open" not in df.columns and date_created_col in df.columns:
-        df[date_created_col] = pd.to_datetime(df[date_created_col], errors="coerce")
-        if date_closed_col in df.columns:
-            df[date_closed_col] = pd.to_datetime(df[date_closed_col], errors="coerce")
-            df["Days Open"] = df.apply(
-                lambda r: (r[date_closed_col] - r[date_created_col]).days
-                if pd.notna(r[date_closed_col])
-                else (datetime.now() - r[date_created_col]).days
-                if pd.notna(r[date_created_col]) else 0,
-                axis=1
-            )
-        else:
-            df["Days Open"] = df[date_created_col].apply(
-                lambda x: (datetime.now() - x).days if pd.notna(x) else 0
-            )
-    return df
-
-
 # Load data
 if data_source == "📤 Upload Procore CSV" and sub_file is not None:
-    df_sub = read_file(sub_file)
-    df_sub = auto_map_columns(df_sub, SUBMITTAL_COL_MAP)
-    df_sub = calc_days_open(df_sub)
-    # Show detected columns for transparency
-    with st.sidebar.expander("🔍 Detected Submittal Columns"):
-        st.write(list(df_sub.columns))
+    df_sub = pd.read_csv(sub_file)
+    df_sub.columns = df_sub.columns.str.strip()
 else:
     df_sub = generate_sample_submittals()
 
 if data_source == "📤 Upload Procore CSV" and rfi_file is not None:
-    df_rfi = read_file(rfi_file)
-    df_rfi = auto_map_columns(df_rfi, RFI_COL_MAP)
-    df_rfi = calc_days_open(df_rfi)
-    with st.sidebar.expander("🔍 Detected RFI Columns"):
-        st.write(list(df_rfi.columns))
+    df_rfi = pd.read_csv(rfi_file)
+    df_rfi.columns = df_rfi.columns.str.strip()
 else:
     df_rfi = generate_sample_rfis()
 
@@ -322,24 +218,11 @@ for col in ["Date Created", "Due Date", "Date Closed"]:
     if col in df_rfi.columns:
         df_rfi[col] = pd.to_datetime(df_rfi[col], errors="coerce")
 
-# Ensure Days Open is numeric
-if "Days Open" in df_sub.columns:
-    df_sub["Days Open"] = pd.to_numeric(df_sub["Days Open"], errors="coerce").fillna(0).astype(int)
-if "Days Open" in df_rfi.columns:
-    df_rfi["Days Open"] = pd.to_numeric(df_rfi["Days Open"], errors="coerce").fillna(0).astype(int)
-
-# Calculate overdue flags (flexible status matching)
-sub_open_statuses = [s for s in df_sub["Status"].unique() if any(
-    k in str(s).lower() for k in ["open", "pending", "revise", "draft", "submitted", "in review"]
-)] if "Status" in df_sub.columns else []
-rfi_open_statuses = [s for s in df_rfi["Status"].unique() if any(
-    k in str(s).lower() for k in ["open", "pending", "overdue", "draft", "in review"]
-)] if "Status" in df_rfi.columns else []
-
-df_sub["Is Overdue"] = (df_sub["Status"].isin(sub_open_statuses)) & \
-                        (df_sub["Days Open"] > submittal_threshold) if "Status" in df_sub.columns else False
-df_rfi["Is Overdue"] = (df_rfi["Status"].isin(rfi_open_statuses)) & \
-                        (df_rfi["Days Open"] > rfi_threshold) if "Status" in df_rfi.columns else False
+# Calculate overdue flags
+df_sub["Is Overdue"] = (df_sub["Status"].isin(["Open", "Pending Review", "Revise & Resubmit"])) & \
+                        (df_sub["Days Open"] > submittal_threshold)
+df_rfi["Is Overdue"] = (df_rfi["Status"].isin(["Open", "Pending Response", "Overdue"])) & \
+                        (df_rfi["Days Open"] > rfi_threshold)
 
 
 # ============================================================
@@ -426,6 +309,15 @@ if len(overdue_subs) > 0 or len(overdue_rfis) > 0:
 # ============================================================
 tab1, tab2, tab3 = st.tabs(["📋 Submittals", "📝 RFIs", "📈 Analytics & Bottlenecks"])
 
+PLOT_LAYOUT = dict(
+    paper_bgcolor=COLORS["bg"],
+    plot_bgcolor=COLORS["bg"],
+    font=dict(color=COLORS["text"]),
+    title_font_size=14,
+    xaxis=dict(gridcolor=COLORS["grid"]),
+    yaxis=dict(gridcolor=COLORS["grid"]),
+)
+
 # ---- SUBMITTALS TAB ----
 with tab1:
     st.markdown("<div class='section-header'>Submittal Status Board</div>", unsafe_allow_html=True)
@@ -451,15 +343,10 @@ with tab1:
         bic_counts.columns = ["Ball in Court", "Count"]
         fig_bic = px.bar(
             bic_counts, x="Ball in Court", y="Count",
-            color="Count", color_continuous_scale=["#1A1D23", COLORS["accent"]],
+            color="Count", color_continuous_scale=["#E2E8F0", COLORS["accent"]],
             title="Open Submittals — Ball in Court"
         )
-        fig_bic.update_layout(
-            paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
-            font=dict(color=COLORS["text"]), title_font_size=14,
-            xaxis=dict(gridcolor="#2D3039"), yaxis=dict(gridcolor="#2D3039"),
-            showlegend=False
-        )
+        fig_bic.update_layout(**PLOT_LAYOUT, showlegend=False)
         st.plotly_chart(fig_bic, use_container_width=True)
 
     # Contractor breakdown
@@ -471,10 +358,7 @@ with tab1:
                                   COLORS["accent"], COLORS["danger"], COLORS["accent2"]]
     )
     fig_sub_contr.update_layout(
-        paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
-        font=dict(color=COLORS["text"]),
-        xaxis=dict(gridcolor="#2D3039"), yaxis=dict(gridcolor="#2D3039"),
-        legend=dict(orientation="h", y=-0.2)
+        **PLOT_LAYOUT, legend=dict(orientation="h", y=-0.2)
     )
     st.plotly_chart(fig_sub_contr, use_container_width=True)
 
@@ -518,15 +402,10 @@ with tab2:
             disc_counts.columns = ["Discipline", "Count"]
             fig_disc = px.bar(
                 disc_counts, x="Discipline", y="Count",
-                color="Count", color_continuous_scale=["#1A1D23", COLORS["accent2"]],
+                color="Count", color_continuous_scale=["#E2E8F0", COLORS["accent2"]],
                 title="RFIs by Discipline"
             )
-            fig_disc.update_layout(
-                paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
-                font=dict(color=COLORS["text"]), title_font_size=14,
-                xaxis=dict(gridcolor="#2D3039"), yaxis=dict(gridcolor="#2D3039"),
-                showlegend=False
-            )
+            fig_disc.update_layout(**PLOT_LAYOUT, showlegend=False)
             st.plotly_chart(fig_disc, use_container_width=True)
 
     # Priority & Impact
@@ -540,12 +419,7 @@ with tab2:
                              color_discrete_map={"Critical": COLORS["danger"], "High": COLORS["warning"],
                                                   "Medium": COLORS["blue"], "Low": COLORS["muted"]},
                              title="RFIs by Priority")
-            fig_pri.update_layout(
-                paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
-                font=dict(color=COLORS["text"]), title_font_size=14,
-                xaxis=dict(gridcolor="#2D3039"), yaxis=dict(gridcolor="#2D3039"),
-                showlegend=False
-            )
+            fig_pri.update_layout(**PLOT_LAYOUT, showlegend=False)
             st.plotly_chart(fig_pri, use_container_width=True)
 
     with col_f:
@@ -582,7 +456,6 @@ with tab2:
 with tab3:
     st.markdown("<div class='section-header'>Bottleneck & Trend Analytics</div>", unsafe_allow_html=True)
 
-    # Average turnaround by contractor
     col_g, col_h = st.columns(2)
     with col_g:
         avg_sub = df_sub_f.groupby("Contractor")["Days Open"].mean().reset_index()
@@ -590,15 +463,10 @@ with tab3:
         avg_sub = avg_sub.sort_values("Avg Days", ascending=False)
         fig_avg_sub = px.bar(
             avg_sub, x="Contractor", y="Avg Days",
-            color="Avg Days", color_continuous_scale=["#10B981", "#F59E0B", "#EF4444"],
+            color="Avg Days", color_continuous_scale=["#059669", "#D97706", "#DC2626"],
             title="Avg Submittal Turnaround by Contractor"
         )
-        fig_avg_sub.update_layout(
-            paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
-            font=dict(color=COLORS["text"]), title_font_size=14,
-            xaxis=dict(gridcolor="#2D3039"), yaxis=dict(gridcolor="#2D3039"),
-            showlegend=False
-        )
+        fig_avg_sub.update_layout(**PLOT_LAYOUT, showlegend=False)
         st.plotly_chart(fig_avg_sub, use_container_width=True)
 
     with col_h:
@@ -607,15 +475,10 @@ with tab3:
         avg_rfi = avg_rfi.sort_values("Avg Days", ascending=False)
         fig_avg_rfi = px.bar(
             avg_rfi, x="Contractor", y="Avg Days",
-            color="Avg Days", color_continuous_scale=["#10B981", "#F59E0B", "#EF4444"],
+            color="Avg Days", color_continuous_scale=["#059669", "#D97706", "#DC2626"],
             title="Avg RFI Response Time by Contractor"
         )
-        fig_avg_rfi.update_layout(
-            paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
-            font=dict(color=COLORS["text"]), title_font_size=14,
-            xaxis=dict(gridcolor="#2D3039"), yaxis=dict(gridcolor="#2D3039"),
-            showlegend=False
-        )
+        fig_avg_rfi.update_layout(**PLOT_LAYOUT, showlegend=False)
         st.plotly_chart(fig_avg_rfi, use_container_width=True)
 
     # Ball in Court heatmap
@@ -632,7 +495,7 @@ with tab3:
     if not bic_combined.empty:
         fig_heat = px.treemap(
             bic_combined, path=["Ball in Court", "Contractor", "Type"], values="Count",
-            color="Count", color_continuous_scale=["#1A1D23", COLORS["danger"]],
+            color="Count", color_continuous_scale=["#E2E8F0", COLORS["danger"]],
             title="Open Items — Ball in Court Breakdown"
         )
         fig_heat.update_layout(
@@ -664,8 +527,8 @@ with tab3:
     fig_trend.update_layout(
         paper_bgcolor=COLORS["bg"], plot_bgcolor=COLORS["bg"],
         font=dict(color=COLORS["text"]),
-        xaxis=dict(gridcolor="#2D3039", title="Week"),
-        yaxis=dict(gridcolor="#2D3039", title="Count"),
+        xaxis=dict(gridcolor=COLORS["grid"], title="Week"),
+        yaxis=dict(gridcolor=COLORS["grid"], title="Count"),
         legend=dict(orientation="h", y=-0.15),
         height=350
     )
